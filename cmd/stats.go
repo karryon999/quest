@@ -15,14 +15,33 @@ var statsCmd = &cobra.Command{
 	Short: "Show adventurer stats", //显示冒险者属性
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		p, err := storage.LoadPlayer()
+		//json存储版：
+		//p, err := storage.LoadPlayer()
+		//if err != nil {
+		//	return err
+		//}
+		//quests, err := storage.LoadQuests()
+		//if err != nil {
+		//	return err
+		//}
+
+		//mysql存储版：
+		db, err := storage.OpenMySQL()
 		if err != nil {
 			return err
 		}
-		quests, err := storage.LoadQuests()
+		defer db.Close()
+
+		p, err := storage.LoadPlayerMySQL(db)
 		if err != nil {
 			return err
 		}
+
+		quests, err := storage.LoadQuestMySQL(db)
+		if err != nil {
+			return err
+		}
+
 		completedCount := 0
 		for _, q := range quests {
 			if q.Completed {

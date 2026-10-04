@@ -16,47 +16,113 @@ var doneCmd = &cobra.Command{
 	Use:   "done <id>",
 	Short: "Complete a quest",
 	Args:  cobra.ExactArgs(1),
+	//json存储版：
+	//RunE: func(cmd *cobra.Command, args []string) error {
+	//	id, err := strconv.Atoi(args[0])
+	//	if err != nil {
+	//		return fmt.Errorf("invalid quest ID %s: must be a number", args[0])
+	//	}
+	//	quests, err := storage.LoadQuests()
+	//	if err != nil {
+	//		return err
+	//	}
+	//	found := false
+	//	for i, q := range quests {
+	//		if q.ID == id {
+	//			if q.Completed {
+	//				return fmt.Errorf("quest %d already completed", id)
+	//			}
+	//			//注意：这里不能直接用q.Completed = true
+	//			//因为q是复制了一份当前遍历到的Quest，所以直接用q来修改值的话修改的是副本的值，而不是原对象的值
+	//			quests[i].Completed = true
+	//			now := time.Now()
+	//			quests[i].CompletedAt = &now
+	//
+	//			// 将该任务对应的XP加到该玩家已有的XP中，并保存
+	//			p, err := storage.LoadPlayer()
+	//			if err != nil {
+	//				return err
+	//			}
+	//			p.XP += q.XP
+	//			player.UpdateStreak(&p, now)
+	//			if err := storage.SavePlayer(p); err != nil {
+	//				return err
+	//			}
+	//
+	//			found = true
+	//			fmt.Printf("Completed quest #%d.\n", q.ID)
+	//			break
+	//		}
+	//	}
+	//	if !found {
+	//		return fmt.Errorf("quest %d not found", id)
+	//	}
+	//	return storage.SaveQuests(quests)
+	//},
+
+	//mysql存储版：
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := strconv.Atoi(args[0])
 		if err != nil {
 			return fmt.Errorf("invalid quest ID %s: must be a number", args[0])
 		}
-		quests, err := storage.LoadQuests()
+
+		db, err := storage.OpenMySQL()
 		if err != nil {
 			return err
 		}
-		found := false
-		for i, q := range quests {
-			if q.ID == id {
-				if q.Completed {
-					return fmt.Errorf("quest %d already completed", id)
-				}
-				//注意：这里不能直接用q.Completed = true
-				//因为q是复制了一份当前遍历到的Quest，所以直接用q来修改值的话修改的是副本的值，而不是原对象的值
-				quests[i].Completed = true
-				now := time.Now()
-				quests[i].CompletedAt = &now
+		defer db.Close()
 
-				// 将该任务对应的XP加到该玩家已有的XP中，并保存
-				p, err := storage.LoadPlayer()
-				if err != nil {
-					return err
-				}
-				p.XP += q.XP
-				player.UpdateStreak(&p, now)
-				if err := storage.SavePlayer(p); err != nil {
-					return err
-				}
-
-				found = true
-				fmt.Printf("Completed quest #%d.\n", q.ID)
-				break
-			}
+		tx, err := db.Begin()
+		if err != nil {
+			return err
 		}
+
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Rollback()
+			}
+		}()
+
+		q, found, err := storage.GetQuestByIDTx(tx, id)
+		if err != nil {
+			return err
+		}
+
 		if !found {
 			return fmt.Errorf("quest %d not found", id)
 		}
-		return storage.SaveQuests(quests)
+
+		if q.Completed {
+			return fmt.Errorf("quest %d already completed", id)
+		}
+
+		now := time.Now()
+
+		p, err := storage.LoadPlayerTx(tx)
+		if err != nil {
+			return err
+		}
+
+		p.XP += q.XP
+		player.UpdateStreak(&p, now)
+
+		if err := storage.CompleteQuestTx(tx, id , now); err != nil {
+			return err
+		}
+
+		if err := storage.UpdatePlayerTx(tx, p); err != nil {
+			return err
+		}
+
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+
+		committed = true
+		fmt.Printf("Completed quest #%d. +%d XP\n", q.ID, q.XP)
+		return nil
 	},
 }
 
